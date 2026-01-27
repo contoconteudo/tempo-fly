@@ -33,6 +33,7 @@ const stageConfig: Record<LeadStage, { label: string; color: string }> = {
   meeting_scheduled: { label: "Agendou Reunião", color: "bg-info" },
   meeting_done: { label: "Reunião Feita", color: "bg-accent" },
   proposal: { label: "Proposta Enviada", color: "bg-warning" },
+  followup: { label: "Follow Up", color: "bg-orange-500" },
   negotiation: { label: "Em Negociação", color: "bg-success" },
   won: { label: "Ganho", color: "bg-success" },
   lost: { label: "Perdido", color: "bg-destructive" },
