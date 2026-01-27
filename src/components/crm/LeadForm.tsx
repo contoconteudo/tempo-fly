@@ -10,7 +10,7 @@ import { Lead, LeadTemperature, LeadStage } from "@/types";
 interface LeadFormProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  onSubmit: (data: Omit<Lead, "id" | "createdAt">) => void;
+  onSubmit: (data: Omit<Lead, "id" | "createdAt" | "stageChangedAt">) => void;
   lead?: Lead;
   mode: "create" | "edit";
   defaultStage?: LeadStage;
@@ -28,6 +28,7 @@ const stageLabels: Record<LeadStage, string> = {
   meeting_scheduled: "Agendou Reunião",
   meeting_done: "Reunião Feita",
   proposal: "Proposta Enviada",
+  followup: "Follow Up",
   negotiation: "Em Negociação",
   won: "Ganho",
   lost: "Perdido",
