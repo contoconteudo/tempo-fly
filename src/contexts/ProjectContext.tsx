@@ -77,7 +77,8 @@ export const ProjectProvider: React.FC<ProjectProviderProps> = ({ children }) =>
           `)
           .eq('user_id', user.id);
         if (error) throw error;
-        projectsData = data.map(up => up.projects) as Project[];
+        // Correção: Conversão para unknown antes de Project[]
+        projectsData = data.map(up => up.projects) as unknown as Project[];
       }
 
       setProjects(projectsData);

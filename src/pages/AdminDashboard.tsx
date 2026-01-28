@@ -52,7 +52,8 @@ export default function AdminDashboard() {
         `);
 
       if (error) throw error;
-      setUsers(data as UserWithProjects[] || []);
+      // Correção: Conversão para unknown antes de UserWithProjects[]
+      setUsers(data as unknown as UserWithProjects[] || []);
     } catch (error) {
       console.error('Error fetching users:', error);
     } finally {
