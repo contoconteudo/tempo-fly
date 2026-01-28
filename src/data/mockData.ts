@@ -98,28 +98,8 @@ export const MOCK_USERS: MockUser[] = DEMO_MODE_ONLY ? [
 ] : [];
 
 // ============================================
-// ESPAÇOS DISPONÍVEIS (agora gerenciados dinamicamente via useSpaces)
-// Este export é mantido para compatibilidade, mas usa dados dinâmicos
+// ESPAÇOS - Gerenciados dinamicamente via useSpaces hook
 // ============================================
-
-import { getAllSpaces } from "@/hooks/useSpaces";
-
-// Função para obter ALL_COMPANIES dinamicamente
-export const getCompanies = () => getAllSpaces().map(s => ({
-  id: s.id,
-  label: s.label,
-  description: s.description,
-  color: s.color,
-}));
-
-// ALL_COMPANIES agora é calculado dinamicamente
-// Mantido como getter para compatibilidade
-export const ALL_COMPANIES = getAllSpaces().map(s => ({
-  id: s.id,
-  label: s.label,
-  description: s.description,
-  color: s.color,
-}));
 
 // ============================================
 // PERMISSÕES - Módulos disponíveis para seleção

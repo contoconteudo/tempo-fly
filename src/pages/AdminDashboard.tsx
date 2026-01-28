@@ -33,7 +33,7 @@ import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { useUserRole, type AppRole, type ModulePermission, type CompanyAccess } from "@/hooks/useUserRole";
 import { Alert, AlertDescription } from "@/components/ui/alert";
-import { ALL_MODULES, DEFAULT_ROLE_PERMISSIONS, MockUser, getCompanies } from "@/data/mockData";
+import { ALL_MODULES, DEFAULT_ROLE_PERMISSIONS, MockUser } from "@/data/mockData";
 import { Separator } from "@/components/ui/separator";
 import { useSpaces, Space, SPACE_COLORS } from "@/hooks/useSpaces";
 
