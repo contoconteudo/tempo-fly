@@ -1,37 +1,20 @@
 /**
  * Hook para gerenciar espaços (empresas) do sistema.
- * Apenas admins podem criar e excluir espaços.
  */
 
-import { useState, useEffect, useCallback } from "react";
+import { useCallback } from "react";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { supabase, isSupabaseConfigured } from "@/integrations/supabase/client";
+import { toast } from "sonner";
+import { useUserRole } from "./useUserRole";
 
 export interface Space {
   id: string;
   label: string;
   description: string;
   color: string;
-  createdAt: string;
+  created_at: string;
 }
-
-const SPACES_STORAGE_KEY = "conto-spaces";
-
-// Espaços padrão do sistema
-const DEFAULT_SPACES: Space[] = [
-  { 
-    id: "conto", 
-    label: "Conto", 
-    description: "Agência Conto", 
-    color: "bg-primary",
-    createdAt: "2024-01-01T00:00:00Z"
-  },
-  { 
-    id: "amplia", 
-    label: "Amplia", 
-    description: "Agência Amplia", 
-    color: "bg-blue-600",
-    createdAt: "2024-01-01T00:00:00Z"
-  },
-];
 
 // Cores disponíveis para novos espaços
 export const SPACE_COLORS = [
@@ -45,19 +28,20 @@ export const SPACE_COLORS = [
   { value: "bg-amber-600", label: "Âmbar" },
 ];
 
-// Função para obter espaços do localStorage
-const getStoredSpaces = (): Space[] => {
-  try {
-    const stored = localStorage.getItem(SPACES_STORAGE_KEY);
-    if (stored) {
-      return JSON.parse(stored);
-    }
-    // Inicializar com espaços padrão
-    localStorage.setItem(SPACES_STORAGE_KEY, JSON.stringify(DEFAULT_SPACES));
-    return DEFAULT_SPACES;
-  } catch {
-    return DEFAULT_SPACES;
+// Função de fetch para espaços
+const fetchSpaces = async (): Promise<Space[]> => {
+  if (!isSupabaseConfigured) return [];
+  
+  const { data, error } = await supabase
+    .from('spaces')
+    .select('*')
+    .order('label', { ascending: true });
+
+  if (error) {
+    console.error("Erro ao buscar espaços:", error);
+    throw new Error("Falha ao carregar espaços.");
   }
+  return data as Space[];
 };
 
 // Função para gerar ID único baseado no nome
@@ -72,110 +56,95 @@ const generateSpaceId = (name: string): string => {
 };
 
 export function useSpaces() {
-  const [spaces, setSpaces] = useState<Space[]>(getStoredSpaces);
+  const queryClient = useQueryClient();
+  const { isAdmin } = useUserRole();
 
-  // Recarregar espaços quando houver mudança em outra aba
-  useEffect(() => {
-    const handleStorageChange = (e: StorageEvent) => {
-      if (e.key === SPACES_STORAGE_KEY) {
-        setSpaces(getStoredSpaces());
+  const { data: spaces = [], isLoading } = useQuery<Space[]>({
+    queryKey: ['spaces'],
+    queryFn: fetchSpaces,
+    enabled: isSupabaseConfigured,
+    staleTime: 1000 * 60 * 10, // 10 minutes
+  });
+
+  const invalidateSpaces = () => {
+    queryClient.invalidateQueries({ queryKey: ['spaces'] });
+  };
+
+  const createMutation = useMutation({
+    mutationFn: async (data: { label: string; description: string; color: string }) => {
+      if (!isAdmin) throw new Error("Apenas administradores podem criar espaços.");
+      
+      const id = generateSpaceId(data.label);
+      
+      if (spaces.some(s => s.id === id)) {
+        throw new Error("Já existe um espaço com nome similar.");
       }
-    };
 
-    window.addEventListener("storage", handleStorageChange);
-    return () => window.removeEventListener("storage", handleStorageChange);
-  }, []);
+      const { error } = await supabase
+        .from('spaces')
+        .insert({ id, label: data.label, description: data.description, color: data.color });
 
-  // Salvar espaços no localStorage
-  const saveSpaces = useCallback((newSpaces: Space[]) => {
-    localStorage.setItem(SPACES_STORAGE_KEY, JSON.stringify(newSpaces));
-    setSpaces(newSpaces);
-    // Disparar evento para notificar outros componentes
-    window.dispatchEvent(new CustomEvent("spaces-changed"));
-  }, []);
-
-  // Criar novo espaço
-  const createSpace = useCallback((label: string, description: string, color: string): { success: boolean; error?: string; space?: Space } => {
-    const id = generateSpaceId(label);
-    
-    // Validações
-    if (!label.trim()) {
-      return { success: false, error: "Nome é obrigatório" };
+      if (error) throw error;
+      return { id, ...data };
+    },
+    onSuccess: () => {
+      invalidateSpaces();
+    },
+    onError: (error) => {
+      toast.error(`Erro ao criar espaço: ${error.message}`);
     }
-    
-    if (label.length > 50) {
-      return { success: false, error: "Nome deve ter no máximo 50 caracteres" };
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: async (id: string) => {
+      if (!isAdmin) throw new Error("Apenas administradores podem excluir espaços.");
+      if (spaces.length <= 1) throw new Error("Não é possível excluir o último espaço.");
+      
+      const { error } = await supabase
+        .from('spaces')
+        .delete()
+        .eq('id', id);
+
+      if (error) throw error;
+      return id;
+    },
+    onSuccess: () => {
+      invalidateSpaces();
+      // Disparar evento para CompanyContext atualizar
+      window.dispatchEvent(new CustomEvent("spaces-changed"));
+    },
+    onError: (error) => {
+      toast.error(`Erro ao excluir espaço: ${error.message}`);
     }
-    
-    if (spaces.some(s => s.id === id)) {
-      return { success: false, error: "Já existe um espaço com nome similar" };
-    }
+  });
 
-    const newSpace: Space = {
-      id,
-      label: label.trim(),
-      description: description.trim() || `Espaço ${label.trim()}`,
-      color,
-      createdAt: new Date().toISOString(),
-    };
+  const createSpace = useCallback((label: string, description: string, color: string) => {
+    createMutation.mutate({ label, description, color });
+    return { success: !createMutation.isError, error: createMutation.error?.message };
+  }, [createMutation]);
 
-    const newSpaces = [...spaces, newSpace];
-    saveSpaces(newSpaces);
-    
-    return { success: true, space: newSpace };
-  }, [spaces, saveSpaces]);
+  const deleteSpace = useCallback((id: string) => {
+    deleteMutation.mutate(id);
+    return { success: !deleteMutation.isError, error: deleteMutation.error?.message };
+  }, [deleteMutation]);
 
-  // Atualizar espaço existente
-  const updateSpace = useCallback((id: string, updates: Partial<Omit<Space, "id" | "createdAt">>): { success: boolean; error?: string } => {
-    const spaceIndex = spaces.findIndex(s => s.id === id);
-    
-    if (spaceIndex === -1) {
-      return { success: false, error: "Espaço não encontrado" };
-    }
-
-    const updatedSpaces = [...spaces];
-    updatedSpaces[spaceIndex] = {
-      ...updatedSpaces[spaceIndex],
-      ...updates,
-    };
-    
-    saveSpaces(updatedSpaces);
-    return { success: true };
-  }, [spaces, saveSpaces]);
-
-  // Excluir espaço
-  const deleteSpace = useCallback((id: string): { success: boolean; error?: string } => {
-    const space = spaces.find(s => s.id === id);
-    
-    if (!space) {
-      return { success: false, error: "Espaço não encontrado" };
-    }
-
-    // Não permitir excluir se for o último espaço
-    if (spaces.length <= 1) {
-      return { success: false, error: "Não é possível excluir o último espaço" };
-    }
-
-    const newSpaces = spaces.filter(s => s.id !== id);
-    saveSpaces(newSpaces);
-    
-    return { success: true };
-  }, [spaces, saveSpaces]);
-
-  // Obter IDs de todos os espaços (para tipagem dinâmica)
   const getSpaceIds = useCallback((): string[] => {
     return spaces.map(s => s.id);
   }, [spaces]);
 
   return {
     spaces,
+    isLoading,
     createSpace,
-    updateSpace,
     deleteSpace,
     getSpaceIds,
     SPACE_COLORS,
   };
 }
 
-// Exportar função para uso em contextos sem hook
-export const getAllSpaces = getStoredSpaces;
+// Exportar função para uso em contextos sem hook (apenas para inicialização)
+export const getAllSpaces = async (): Promise<Space[]> => {
+  if (!isSupabaseConfigured) return [];
+  const { data } = await supabase.from('spaces').select('*');
+  return data as Space[] || [];
+};

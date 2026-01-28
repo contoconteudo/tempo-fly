@@ -1,19 +1,33 @@
-import { useLocalStorage } from "./useLocalStorage";
-import { Objective, ProgressLog, ObjectiveValueType, ObjectiveStatus, CommercialDataSource } from "@/types";
 import { useCallback, useMemo } from "react";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { supabase, isSupabaseConfigured } from "@/integrations/supabase/client";
+import { Objective, ProgressLog, ObjectiveValueType, ObjectiveStatus, CommercialDataSource } from "@/types";
 import { useLeads } from "./useLeads";
 import { useClients } from "./useClients";
-import { STORAGE_KEYS } from "@/lib/constants";
-import { MOCK_OBJECTIVES } from "@/data/mockData";
 import { useCompany } from "@/contexts/CompanyContext";
+import { toast } from "sonner";
+
+const OBJECTIVES_QUERY_KEY = 'objectives';
 
 function calculateStatus(currentValue: number, targetValue: number, deadline: string): ObjectiveStatus {
+  if (targetValue === 0) return "on_track";
   const progress = (currentValue / targetValue) * 100;
   const now = new Date();
   const deadlineDate = new Date(deadline);
-  const startOfYear = new Date("2025-01-01");
+  
+  // Usar o início do ano atual como base para o cálculo de progresso esperado
+  const startOfYear = new Date(now.getFullYear(), 0, 1); 
+  
   const totalDays = (deadlineDate.getTime() - startOfYear.getTime()) / (1000 * 60 * 60 * 24);
   const daysElapsed = (now.getTime() - startOfYear.getTime()) / (1000 * 60 * 60 * 24);
+  
+  if (totalDays <= 0 || daysElapsed <= 0) {
+    // Se o prazo já passou ou ainda não começou o ano, basear apenas no progresso
+    if (progress >= 100) return "on_track";
+    if (progress >= 75) return "at_risk";
+    return "behind";
+  }
+  
   const expectedProgress = (daysElapsed / totalDays) * 100;
 
   if (progress >= expectedProgress - 10) return "on_track";
@@ -21,16 +35,49 @@ function calculateStatus(currentValue: number, targetValue: number, deadline: st
   return "behind";
 }
 
+const fetchObjectives = async (spaceId: string): Promise<Objective[]> => {
+  if (!isSupabaseConfigured) return [];
+  
+  const { data, error } = await supabase
+    .from('objectives')
+    .select(`
+      *,
+      progressLogs:progress_logs(*)
+    `)
+    .eq('space_id', spaceId)
+    .order('created_at', { ascending: false });
+
+  if (error) throw error;
+  
+  return data.map(obj => ({
+    ...obj,
+    company_id: obj.space_id,
+    valueType: obj.value_type,
+    targetValue: obj.target_value,
+    currentValue: obj.current_value,
+    isCommercial: obj.is_commercial,
+    dataSources: obj.data_sources,
+    progressLogs: obj.progressLogs || [],
+  })) as Objective[];
+};
+
 export function useObjectives() {
-  const [allObjectives, setAllObjectives] = useLocalStorage<Objective[]>(STORAGE_KEYS.OBJECTIVES, MOCK_OBJECTIVES);
+  const queryClient = useQueryClient();
   const { leads } = useLeads();
   const { clients } = useClients();
-  const { currentCompany } = useCompany();
+  const { currentCompany, isLoading: companyLoading } = useCompany();
+  const userId = supabase.auth.getUser()?.id;
 
-  // Filtrar objetivos pelo espaço atual
-  const objectives = useMemo(() => {
-    return allObjectives.filter((obj) => obj.company_id === currentCompany);
-  }, [allObjectives, currentCompany]);
+  const { data: objectives = [], isLoading } = useQuery<Objective[]>({
+    queryKey: [OBJECTIVES_QUERY_KEY, currentCompany],
+    queryFn: () => fetchObjectives(currentCompany),
+    enabled: isSupabaseConfigured && !!currentCompany && !companyLoading,
+    staleTime: 1000 * 60, // 1 minute
+  });
+
+  const invalidateObjectives = () => {
+    queryClient.invalidateQueries({ queryKey: [OBJECTIVES_QUERY_KEY, currentCompany] });
+  };
 
   // Calcula valor automático para metas comerciais
   const calculateCommercialValue = useCallback(
@@ -66,177 +113,198 @@ export function useObjectives() {
       if (obj.isCommercial && obj.dataSources.length > 0) {
         const calculatedValue = calculateCommercialValue(obj.dataSources, obj.valueType);
         const status = calculateStatus(calculatedValue, obj.targetValue, obj.deadline);
+        
+        // Se o valor calculado for diferente do valor atual no DB, atualiza o DB em background
+        if (calculatedValue !== obj.currentValue || status !== obj.status) {
+          // Não usamos mutation aqui para evitar loop, apenas um update simples
+          supabase
+            .from('objectives')
+            .update({ current_value: calculatedValue, status })
+            .eq('id', obj.id)
+            .then(({ error }) => {
+              if (error) console.error("Erro ao atualizar valor comercial automático:", error);
+            });
+        }
+        
         return { ...obj, currentValue: calculatedValue, status };
       }
-      return obj;
+      return { ...obj, status: calculateStatus(obj.currentValue, obj.targetValue, obj.deadline) };
     });
   }, [objectives, calculateCommercialValue]);
 
-  const addObjective = useCallback(
-    (data: Omit<Objective, "id" | "createdAt" | "progressLogs" | "currentValue" | "status" | "project_id" | "user_id" | "company_id">) => {
+  const addMutation = useMutation({
+    mutationFn: async (data: Omit<Objective, "id" | "createdAt" | "progressLogs" | "currentValue" | "status" | "project_id" | "user_id" | "company_id">) => {
+      if (!userId) throw new Error("Usuário não autenticado.");
+      
       const initialValue = data.isCommercial && data.dataSources.length > 0
         ? calculateCommercialValue(data.dataSources, data.valueType)
         : 0;
-      
-      const newObjective: Objective = {
+        
+      const newObjectiveData = {
         ...data,
-        id: crypto.randomUUID(),
-        project_id: "default",
-        user_id: "current-user",
-        company_id: currentCompany,
-        createdAt: new Date().toISOString().split("T")[0],
-        currentValue: initialValue,
+        space_id: currentCompany,
+        user_id: userId,
+        value_type: data.valueType,
+        target_value: data.targetValue,
+        current_value: initialValue,
+        is_commercial: data.isCommercial,
+        data_sources: data.dataSources,
         status: calculateStatus(initialValue, data.targetValue, data.deadline),
-        progressLogs: [],
       };
-      setAllObjectives((prev) => [...prev, newObjective]);
+      
+      const { data: newObjective, error } = await supabase
+        .from('objectives')
+        .insert(newObjectiveData)
+        .select()
+        .single();
+
+      if (error) throw error;
       return newObjective;
     },
-    [setAllObjectives, calculateCommercialValue, currentCompany]
-  );
-
-  const updateObjective = useCallback(
-    (id: string, data: Partial<Omit<Objective, "id" | "createdAt" | "progressLogs" | "project_id" | "user_id" | "company_id">>) => {
-      setAllObjectives((prev) =>
-        prev.map((obj) => {
-          if (obj.id !== id) return obj;
-          const updated = { ...obj, ...data };
-          updated.status = calculateStatus(updated.currentValue, updated.targetValue, updated.deadline);
-          return updated;
-        })
-      );
+    onSuccess: () => {
+      invalidateObjectives();
+      toast.success("Objetivo criado com sucesso!");
     },
-    [setAllObjectives]
-  );
+    onError: (error) => {
+      toast.error(`Erro ao criar objetivo: ${error.message}`);
+    }
+  });
 
-  const deleteObjective = useCallback(
-    (id: string) => {
-      setAllObjectives((prev) => prev.filter((obj) => obj.id !== id));
+  const updateMutation = useMutation({
+    mutationFn: async ({ id, data }: { id: string, data: Partial<Omit<Objective, "id" | "createdAt" | "progressLogs" | "project_id" | "user_id" | "company_id">>) => {
+      const updateData = {
+        ...data,
+        value_type: data.valueType,
+        target_value: data.targetValue,
+        is_commercial: data.isCommercial,
+        data_sources: data.dataSources,
+        // current_value e status serão recalculados no fetch/memo
+      };
+      
+      const { error } = await supabase
+        .from('objectives')
+        .update(updateData)
+        .eq('id', id);
+
+      if (error) throw error;
+      return id;
     },
-    [setAllObjectives]
-  );
+    onSuccess: () => {
+      invalidateObjectives();
+      toast.success("Objetivo atualizado com sucesso!");
+    },
+    onError: (error) => {
+      toast.error(`Erro ao atualizar objetivo: ${error.message}`);
+    }
+  });
 
-  const addProgressLog = useCallback(
-    (objectiveId: string, month: number, year: number, value: number, description: string) => {
-      const log: ProgressLog = {
-        id: crypto.randomUUID(),
+  const deleteMutation = useMutation({
+    mutationFn: async (id: string) => {
+      const { error } = await supabase
+        .from('objectives')
+        .delete()
+        .eq('id', id);
+
+      if (error) throw error;
+      return id;
+    },
+    onSuccess: () => {
+      invalidateObjectives();
+      toast.success("Objetivo excluído com sucesso!");
+    },
+    onError: (error) => {
+      toast.error(`Erro ao excluir objetivo: ${error.message}`);
+    }
+  });
+
+  const addProgressLogMutation = useMutation({
+    mutationFn: async ({ objectiveId, month, year, value, description }: { objectiveId: string, month: number, year: number, value: number, description: string }) => {
+      const logData = {
         objective_id: objectiveId,
         month,
         year,
-        date: new Date().toISOString().split("T")[0],
         value,
         description,
+        recorded_at: new Date().toISOString(),
       };
+      
+      // Tenta inserir, se falhar por UNIQUE constraint (objective_id, month, year), tenta atualizar
+      const { error: insertError } = await supabase
+        .from('progress_logs')
+        .insert(logData);
 
-      setAllObjectives((prev) =>
-        prev.map((obj) => {
-          if (obj.id !== objectiveId) return obj;
+      if (insertError) {
+        if (insertError.code === '23505') { // Unique violation
+          const { error: updateError } = await supabase
+            .from('progress_logs')
+            .update(logData)
+            .eq('objective_id', objectiveId)
+            .eq('month', month)
+            .eq('year', year);
           
-          // Remove log existente para o mesmo mês/ano se houver
-          const filteredLogs = obj.progressLogs.filter(
-            (l) => !(l.month === month && l.year === year)
-          );
-          const newLogs = [...filteredLogs, log];
-          
-          // O currentValue é a soma de todos os valores mensais para quantity
-          // Ou o último valor para financial/percentage
-          let newCurrentValue: number;
-          if (obj.valueType === "quantity") {
-            newCurrentValue = newLogs.reduce((sum, l) => sum + l.value, 0);
-          } else {
-            // Para financial e percentage, pega o valor mais recente
-            const sortedLogs = [...newLogs].sort((a, b) => {
-              if (a.year !== b.year) return b.year - a.year;
-              return b.month - a.month;
-            });
-            newCurrentValue = sortedLogs[0]?.value || 0;
-          }
-          
-          const newStatus = calculateStatus(newCurrentValue, obj.targetValue, obj.deadline);
-          return {
-            ...obj,
-            progressLogs: newLogs,
-            currentValue: newCurrentValue,
-            status: newStatus,
-          };
-        })
-      );
-
-      return log;
+          if (updateError) throw updateError;
+        } else {
+          throw insertError;
+        }
+      }
+      
+      // Recalcular currentValue e status no servidor (ou no hook após invalidação)
+      return { objectiveId, value };
     },
-    [setAllObjectives]
-  );
-
-  const updateProgressLog = useCallback(
-    (objectiveId: string, month: number, year: number, value: number, description: string) => {
-      setAllObjectives((prev) =>
-        prev.map((obj) => {
-          if (obj.id !== objectiveId) return obj;
-          
-          const updatedLogs = obj.progressLogs.map((log) => {
-            if (log.month === month && log.year === year) {
-              return { ...log, value, description, date: new Date().toISOString().split("T")[0] };
-            }
-            return log;
-          });
-          
-          let newCurrentValue: number;
-          if (obj.valueType === "quantity") {
-            newCurrentValue = updatedLogs.reduce((sum, l) => sum + l.value, 0);
-          } else {
-            const sortedLogs = [...updatedLogs].sort((a, b) => {
-              if (a.year !== b.year) return b.year - a.year;
-              return b.month - a.month;
-            });
-            newCurrentValue = sortedLogs[0]?.value || 0;
-          }
-          
-          const newStatus = calculateStatus(newCurrentValue, obj.targetValue, obj.deadline);
-          return {
-            ...obj,
-            progressLogs: updatedLogs,
-            currentValue: newCurrentValue,
-            status: newStatus,
-          };
-        })
-      );
+    onSuccess: () => {
+      invalidateObjectives();
+      toast.success("Progresso registrado!");
     },
-    [setAllObjectives]
-  );
+    onError: (error) => {
+      toast.error(`Erro ao registrar progresso: ${error.message}`);
+    }
+  });
 
-  const deleteProgressLog = useCallback(
-    (objectiveId: string, month: number, year: number) => {
-      setAllObjectives((prev) =>
-        prev.map((obj) => {
-          if (obj.id !== objectiveId) return obj;
-          
-          const filteredLogs = obj.progressLogs.filter(
-            (log) => !(log.month === month && log.year === year)
-          );
-          
-          let newCurrentValue: number;
-          if (obj.valueType === "quantity") {
-            newCurrentValue = filteredLogs.reduce((sum, l) => sum + l.value, 0);
-          } else {
-            const sortedLogs = [...filteredLogs].sort((a, b) => {
-              if (a.year !== b.year) return b.year - a.year;
-              return b.month - a.month;
-            });
-            newCurrentValue = sortedLogs[0]?.value || 0;
-          }
-          
-          const newStatus = calculateStatus(newCurrentValue, obj.targetValue, obj.deadline);
-          return {
-            ...obj,
-            progressLogs: filteredLogs,
-            currentValue: newCurrentValue,
-            status: newStatus,
-          };
-        })
-      );
+  const deleteProgressLogMutation = useMutation({
+    mutationFn: async ({ objectiveId, month, year }: { objectiveId: string, month: number, year: number }) => {
+      const { error } = await supabase
+        .from('progress_logs')
+        .delete()
+        .eq('objective_id', objectiveId)
+        .eq('month', month)
+        .eq('year', year);
+
+      if (error) throw error;
+      return objectiveId;
     },
-    [setAllObjectives]
-  );
+    onSuccess: () => {
+      invalidateObjectives();
+      toast.success("Registro de progresso excluído!");
+    },
+    onError: (error) => {
+      toast.error(`Erro ao excluir progresso: ${error.message}`);
+    }
+  });
+
+  const addObjective = useCallback((data: Omit<Objective, "id" | "createdAt" | "progressLogs" | "currentValue" | "status" | "project_id" | "user_id" | "company_id">) => {
+    addMutation.mutate(data);
+  }, [addMutation]);
+
+  const updateObjective = useCallback((id: string, data: Partial<Omit<Objective, "id" | "createdAt" | "progressLogs" | "project_id" | "user_id" | "company_id">>) => {
+    updateMutation.mutate({ id, data });
+  }, [updateMutation]);
+
+  const deleteObjective = useCallback((id: string) => {
+    deleteMutation.mutate(id);
+  }, [deleteMutation]);
+
+  const addProgressLog = useCallback((objectiveId: string, month: number, year: number, value: number, description: string) => {
+    addProgressLogMutation.mutate({ objectiveId, month, year, value, description });
+  }, [addProgressLogMutation]);
+
+  const updateProgressLog = useCallback((objectiveId: string, month: number, year: number, value: number, description: string) => {
+    // Como a lógica de upsert é a mesma, usamos a mesma mutation
+    addProgressLogMutation.mutate({ objectiveId, month, year, value, description });
+  }, [addProgressLogMutation]);
+
+  const deleteProgressLog = useCallback((objectiveId: string, month: number, year: number) => {
+    deleteProgressLogMutation.mutate({ objectiveId, month, year });
+  }, [deleteProgressLogMutation]);
 
   const getMonthlyProgress = useCallback((objective: Objective, month: number, year: number) => {
     return objective.progressLogs.find((log) => log.month === month && log.year === year);
@@ -256,6 +324,7 @@ export function useObjectives() {
 
   return {
     objectives: objectivesWithCommercialValues,
+    isLoading,
     addObjective,
     updateObjective,
     deleteObjective,
