@@ -1,9 +1,10 @@
 import { createRoot } from "react-dom/client";
-import { defineCustomElements } from "@ionic/pwa-elements/loader";
 import App from "./App.tsx";
 import "./index.css";
+import { ProjectProvider } from "./contexts/ProjectContext";
 
-// Initialize Ionic PWA Elements for Capacitor camera/photo functionality
-defineCustomElements(window);
-
-createRoot(document.getElementById("root")!).render(<App />);
+createRoot(document.getElementById("root")!).render(
+  <ProjectProvider>
+    <App />
+  </ProjectProvider>
+);

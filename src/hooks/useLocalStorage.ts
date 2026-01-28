@@ -1,12 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 
-/**
- * Hook useLocalStorage mantido apenas para compatibilidade, mas não é mais usado
- * para dados críticos do sistema (Leads, Clientes, Objetivos).
- * 
- * NOTA: O sistema agora usa React Query para persistência de dados.
- */
-
 export function useLocalStorage<T>(key: string, initialValue: T) {
   // Get from local storage then parse stored json or return initialValue
   const readValue = useCallback((): T => {

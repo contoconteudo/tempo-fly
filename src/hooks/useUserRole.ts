@@ -1,18 +1,15 @@
 import { useState, useEffect, useCallback } from "react";
 import { useAuth } from "./useAuth";
-import { supabase, isSupabaseConfigured } from "@/integrations/supabase/client";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { toast } from "sonner";
+import { MOCK_USERS, USER_PERMISSIONS_KEY, AppRole, ModulePermission, CompanyAccess, MockUser } from "@/data/mockData";
 
 // Re-exportando tipos para uso externo
-export type AppRole = "admin" | "gestor" | "comercial" | "analista";
-export type ModulePermission = "dashboard" | "crm" | "clients" | "objectives" | "strategy" | "settings" | "admin";
-export type CompanyAccess = string; // ID do espaço/empresa
+export type { AppRole, ModulePermission, CompanyAccess };
 
-interface UserPermissionsData {
-  role: AppRole;
-  modules: ModulePermission[];
-  spaces: CompanyAccess[];
+interface UserPermissions {
+  [userId: string]: {
+    modules: ModulePermission[];
+    companies: CompanyAccess[];
+  };
 }
 
 interface UseUserRoleReturn {
@@ -27,92 +24,92 @@ interface UseUserRoleReturn {
   canAccessCompany: (company: CompanyAccess) => boolean;
   getUserModules: () => ModulePermission[];
   getUserCompanies: () => CompanyAccess[];
-  // Funções de Admin (CRUD de usuários)
-  getAllUsers: () => any[]; // Retorna dados mockados para AdminDashboard, pois não temos todos os users no frontend
+  getAllUsers: () => MockUser[];
   updateUserPermissions: (userId: string, modules: ModulePermission[], companies: CompanyAccess[]) => void;
   updateUserRole: (userId: string, role: AppRole) => void;
 }
 
-// Função de fetch para roles e permissions
-const fetchUserPermissions = async (userId: string | undefined): Promise<UserPermissionsData> => {
-  if (!userId || !isSupabaseConfigured) {
-    // Retorna permissões mínimas se não autenticado ou Supabase não configurado
-    return { role: "analista", modules: ["dashboard", "settings"], spaces: [] };
+// Helper para obter permissões salvas do localStorage
+const getSavedPermissions = (): UserPermissions => {
+  try {
+    const saved = localStorage.getItem(USER_PERMISSIONS_KEY);
+    return saved ? JSON.parse(saved) : {};
+  } catch {
+    return {};
+  }
+};
+
+// Helper para salvar permissões no localStorage
+const savePermissions = (permissions: UserPermissions) => {
+  localStorage.setItem(USER_PERMISSIONS_KEY, JSON.stringify(permissions));
+};
+
+// Helper para carregar permissões de um usuário
+const loadUserPermissions = (userId: string | null) => {
+  if (!userId) {
+    return { role: null as AppRole | null, modules: [] as ModulePermission[], companies: [] as CompanyAccess[] };
   }
 
-  // 1. Buscar Role
-  const { data: roleData, error: roleError } = await supabase
-    .from('user_roles')
-    .select('role')
-    .eq('user_id', userId)
-    .limit(1)
-    .single();
-
-  if (roleError) {
-    console.error("Erro ao buscar role:", roleError);
-    // Fallback para analista em caso de erro
-    return { role: "analista", modules: ["dashboard", "settings"], spaces: [] };
+  const mockUser = MOCK_USERS.find((u) => u.id === userId);
+  
+  if (!mockUser) {
+    return { role: "analista" as AppRole, modules: [] as ModulePermission[], companies: [] as CompanyAccess[] };
   }
 
-  const role = roleData?.role as AppRole || "analista";
-
-  // 2. Buscar Permissões Granulares (Módulos e Espaços)
-  const { data: permsData, error: permsError } = await supabase
-    .from('user_permissions')
-    .select('modules, spaces')
-    .eq('user_id', userId)
-    .limit(1)
-    .single();
-
-  if (permsError && permsError.code !== 'PGRST116') { // PGRST116 = No rows found
-    console.error("Erro ao buscar permissões:", permsError);
+  // Admin sempre tem acesso a tudo
+  if (mockUser.role === "admin") {
+    return { role: mockUser.role, modules: mockUser.modules, companies: mockUser.companies };
   }
 
-  let modules: ModulePermission[] = (permsData?.modules as ModulePermission[] || []);
-  let spaces: CompanyAccess[] = (permsData?.spaces as CompanyAccess[] || []);
-
-  // 3. Regras de Admin
-  if (role === 'admin') {
-    // Admin tem acesso a todos os módulos e espaços (hardcoded para evitar dependência circular)
-    modules = ["dashboard", "strategy", "crm", "clients", "settings", "admin"];
-    spaces = ["conto", "amplia"]; // Hardcoded spaces for mock compatibility, should fetch all spaces in production
-  }
-
-  // 4. Regras de Default (se não houver permissões granulares salvas)
-  if (role !== 'admin' && modules.length === 0) {
-    // Usar defaults baseados na role se não houver permissões granulares
-    const defaultModules = {
-      gestor: ["dashboard", "strategy", "crm", "clients", "settings"],
-      comercial: ["dashboard", "crm", "clients", "settings"],
-      analista: ["dashboard", "settings"],
+  // Para outros usuários, verificar permissões salvas
+  const savedPermissions = getSavedPermissions();
+  const userSavedPerms = savedPermissions[userId];
+  
+  if (userSavedPerms) {
+    return { 
+      role: mockUser.role, 
+      modules: userSavedPerms.modules || [], 
+      companies: userSavedPerms.companies || [] 
     };
-    modules = defaultModules[role] || ["dashboard", "settings"];
   }
 
-  return { role, modules, spaces };
+  return { role: mockUser.role, modules: mockUser.modules, companies: mockUser.companies };
 };
 
 export function useUserRole(): UseUserRoleReturn {
   const { user, isLoading: authLoading } = useAuth();
-  const queryClient = useQueryClient();
+  const [role, setRole] = useState<AppRole | null>(null);
+  const [userModules, setUserModules] = useState<ModulePermission[]>([]);
+  const [userCompanies, setUserCompanies] = useState<CompanyAccess[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
 
-  const { data, isLoading: permsLoading } = useQuery({
-    queryKey: ['userPermissions', user?.id],
-    queryFn: () => fetchUserPermissions(user?.id),
-    enabled: !!user?.id && isSupabaseConfigured,
-    staleTime: 1000 * 60 * 5, // 5 minutes
-    initialData: { role: null, modules: [], spaces: [] } as UserPermissionsData,
-  });
+  // Carregar permissões quando user mudar
+  useEffect(() => {
+    if (authLoading) {
+      return;
+    }
 
-  const role = data?.role || null;
-  const userModules = data?.modules || [];
-  const userCompanies = data?.spaces || [];
-  const isLoading = authLoading || permsLoading;
+    const perms = loadUserPermissions(user?.id || null);
+    setRole(perms.role);
+    setUserModules(perms.modules);
+    setUserCompanies(perms.companies);
+    setIsLoading(false);
+  }, [user?.id, authLoading]);
 
-  const isAdmin = role === "admin";
-  const isGestor = role === "gestor";
-  const isComercial = role === "comercial";
-  const isAnalista = role === "analista";
+  // Escutar evento de mudança de auth para recarregar permissões
+  useEffect(() => {
+    const handleAuthChange = (event: CustomEvent) => {
+      const newUser = event.detail;
+      const perms = loadUserPermissions(newUser?.id || null);
+      setRole(perms.role);
+      setUserModules(perms.modules);
+      setUserCompanies(perms.companies);
+      setIsLoading(false);
+    };
+
+    window.addEventListener("auth-user-changed", handleAuthChange as EventListener);
+    return () => window.removeEventListener("auth-user-changed", handleAuthChange as EventListener);
+  }, []);
 
   const hasRole = useCallback((checkRole: AppRole): boolean => {
     return role === checkRole;
@@ -120,15 +117,15 @@ export function useUserRole(): UseUserRoleReturn {
 
   const canAccessModule = useCallback((module: ModulePermission): boolean => {
     if (!role) return false;
-    if (isAdmin) return true;
+    if (role === "admin") return true;
     return userModules.includes(module);
-  }, [role, isAdmin, userModules]);
+  }, [role, userModules]);
 
   const canAccessCompany = useCallback((company: CompanyAccess): boolean => {
     if (!role) return false;
-    if (isAdmin) return true;
+    if (role === "admin") return true;
     return userCompanies.includes(company);
-  }, [role, isAdmin, userCompanies]);
+  }, [role, userCompanies]);
 
   const getUserModules = useCallback((): ModulePermission[] => {
     return userModules;
@@ -138,59 +135,46 @@ export function useUserRole(): UseUserRoleReturn {
     return userCompanies;
   }, [userCompanies]);
 
-  // --- Admin Actions (Simulação de CRUD de usuários) ---
-  
-  // Em um ambiente real, esta função faria uma chamada RPC ou buscaria dados de uma tabela 'profiles'
-  // Como não temos acesso a todos os usuários do auth.users no frontend (por RLS), mantemos um mock simples para a UI
-  const getAllUsers = useCallback((): any[] => {
-    // Em produção, o AdminDashboard deve buscar dados de perfis e roles via Edge Function ou Service Role
-    // Por enquanto, retornamos um array vazio para evitar erros, já que MOCK_USERS está vazio.
-    return [];
+  const getAllUsers = useCallback((): MockUser[] => {
+    const savedPermissions = getSavedPermissions();
+    
+    return MOCK_USERS.map((u) => {
+      if (u.role === "admin") {
+        return u;
+      }
+      
+      const savedPerms = savedPermissions[u.id];
+      return {
+        ...u,
+        modules: savedPerms?.modules ?? u.modules,
+        companies: savedPerms?.companies ?? u.companies,
+      };
+    });
   }, []);
 
-  const updateUserPermissions = useCallback(async (userId: string, modules: ModulePermission[], companies: CompanyAccess[]) => {
-    if (!isAdmin) {
-      toast.error("Apenas administradores podem alterar permissões.");
-      return;
-    }
+  const updateUserPermissions = useCallback((userId: string, modules: ModulePermission[], companies: CompanyAccess[]) => {
+    const savedPermissions = getSavedPermissions();
+    savedPermissions[userId] = { modules, companies };
+    savePermissions(savedPermissions);
     
-    const { error } = await supabase
-      .from('user_permissions')
-      .upsert({ user_id: userId, modules, spaces: companies }, { onConflict: 'user_id' });
-
-    if (error) {
-      toast.error(`Erro ao salvar permissões: ${error.message}`);
-    } else {
-      // Invalida a query para o usuário afetado (se for o próprio admin, ele verá a mudança)
-      queryClient.invalidateQueries({ queryKey: ['userPermissions', userId] });
+    // Se for o usuário atual, atualizar estado
+    if (user?.id === userId && role !== "admin") {
+      setUserModules(modules);
+      setUserCompanies(companies);
     }
-  }, [isAdmin, queryClient]);
+  }, [user?.id, role]);
 
-  const updateUserRole = useCallback(async (userId: string, newRole: AppRole) => {
-    if (!isAdmin) {
-      toast.error("Apenas administradores podem alterar roles.");
-      return;
-    }
-    
-    const { error } = await supabase
-      .from('user_roles')
-      .update({ role: newRole })
-      .eq('user_id', userId);
-
-    if (error) {
-      toast.error(`Erro ao salvar role: ${error.message}`);
-    } else {
-      queryClient.invalidateQueries({ queryKey: ['userPermissions', userId] });
-    }
-  }, [isAdmin, queryClient]);
+  const updateUserRole = useCallback((userId: string, newRole: AppRole) => {
+    console.log(`Role do usuário ${userId} alterada para ${newRole}`);
+  }, []);
 
   return {
     role,
-    isLoading,
-    isAdmin,
-    isGestor,
-    isComercial,
-    isAnalista,
+    isLoading: isLoading || authLoading,
+    isAdmin: role === "admin",
+    isGestor: role === "gestor",
+    isComercial: role === "comercial",
+    isAnalista: role === "analista",
     hasRole,
     canAccessModule,
     canAccessCompany,
