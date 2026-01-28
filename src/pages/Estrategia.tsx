@@ -114,7 +114,7 @@ export default function Estrategia() {
         <h2 className="text-base md:text-lg font-semibold text-foreground">Objetivos Estratégicos</h2>
         <Button 
           onClick={() => setShowCreateForm(true)} 
-          className="gradient-primary text-primary-foreground gap-1.5 w-full sm:w-auto touch-manipulation"
+          className="gradient-primary text-primary-foreground gap-1.5 sm:w-auto touch-manipulation"
         >
           <Plus className="h-4 w-4" />
           Novo Objetivo
