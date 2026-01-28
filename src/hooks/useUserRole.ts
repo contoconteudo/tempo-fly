@@ -70,13 +70,13 @@ export function useUserRole(): UseUserRoleReturn {
         // Buscar permissões específicas
         const { data: permData } = await supabase
           .from("user_permissions")
-          .select("modules, spaces")
+          .select("allowed_modules, allowed_spaces")
           .eq("user_id", userId)
           .maybeSingle();
 
         if (permData) {
-          setUserModules((permData.modules || []) as ModulePermission[]);
-          setUserCompanies(permData.spaces || []);
+          setUserModules((permData.allowed_modules || []) as ModulePermission[]);
+          setUserCompanies(permData.allowed_spaces || []);
         } else {
           setUserModules([]);
           setUserCompanies([]);
@@ -171,15 +171,15 @@ export function useUserRole(): UseUserRoleReturn {
 
         const { data: permData } = await supabase
           .from("user_permissions")
-          .select("modules, spaces")
+          .select("allowed_modules, allowed_spaces")
           .eq("user_id", profile.id)
           .maybeSingle();
 
         return {
           ...profile,
           role: (roleData?.role as AppRole) || null,
-          modules: (permData?.modules || []) as ModulePermission[],
-          companies: permData?.spaces || [],
+          modules: (permData?.allowed_modules || []) as ModulePermission[],
+          companies: permData?.allowed_spaces || [],
         };
       })
     );
@@ -203,13 +203,13 @@ export function useUserRole(): UseUserRoleReturn {
       // Atualizar
       await supabase
         .from("user_permissions")
-        .update({ modules, spaces: companies, updated_at: new Date().toISOString() })
+        .update({ allowed_modules: modules, allowed_spaces: companies, updated_at: new Date().toISOString() })
         .eq("user_id", userId);
     } else {
       // Inserir
       await supabase
         .from("user_permissions")
-        .insert({ user_id: userId, modules, spaces: companies });
+        .insert({ user_id: userId, allowed_modules: modules, allowed_spaces: companies });
     }
 
     // Se for o usuário atual, atualizar estado
