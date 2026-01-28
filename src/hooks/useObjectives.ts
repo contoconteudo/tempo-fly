@@ -1,38 +1,11 @@
-/**
- * Hook para gerenciar Objetivos - MODO MOCK
- * 
- * TODO: Conectar Supabase depois
- * Atualmente usa localStorage para persistência.
- */
-
-import { useState, useEffect, useCallback, useMemo } from "react";
-import { useAuth } from "./useAuth";
-import { useCompany } from "@/contexts/CompanyContext";
+import { useLocalStorage } from "./useLocalStorage";
+import { Objective, ProgressLog, ObjectiveValueType, ObjectiveStatus, CommercialDataSource } from "@/types";
+import { useCallback, useMemo } from "react";
 import { useLeads } from "./useLeads";
 import { useClients } from "./useClients";
-import { Objective, ProgressLog, ObjectiveValueType, ObjectiveStatus, CommercialDataSource } from "@/types";
-import { MOCK_OBJECTIVES } from "@/data/mockData";
 import { STORAGE_KEYS } from "@/lib/constants";
-
-// Obter objetivos do localStorage
-const getStoredObjectives = (): Objective[] => {
-  try {
-    const stored = localStorage.getItem(STORAGE_KEYS.OBJECTIVES);
-    if (stored) {
-      return JSON.parse(stored);
-    }
-    // Salvar objetivos mock se não existir
-    localStorage.setItem(STORAGE_KEYS.OBJECTIVES, JSON.stringify(MOCK_OBJECTIVES));
-    return MOCK_OBJECTIVES;
-  } catch {
-    return MOCK_OBJECTIVES;
-  }
-};
-
-// Salvar objetivos no localStorage
-const saveObjectives = (objectives: Objective[]) => {
-  localStorage.setItem(STORAGE_KEYS.OBJECTIVES, JSON.stringify(objectives));
-};
+import { MOCK_OBJECTIVES } from "@/data/mockData";
+import { useCompany } from "@/contexts/CompanyContext";
 
 function calculateStatus(currentValue: number, targetValue: number, deadline: string): ObjectiveStatus {
   const progress = (currentValue / targetValue) * 100;
@@ -49,17 +22,10 @@ function calculateStatus(currentValue: number, targetValue: number, deadline: st
 }
 
 export function useObjectives() {
-  const { user } = useAuth();
-  const { currentCompany } = useCompany();
+  const [allObjectives, setAllObjectives] = useLocalStorage<Objective[]>(STORAGE_KEYS.OBJECTIVES, MOCK_OBJECTIVES);
   const { leads } = useLeads();
   const { clients } = useClients();
-  const [allObjectives, setAllObjectives] = useState<Objective[]>(getStoredObjectives);
-  const [isLoading, setIsLoading] = useState(false);
-
-  // Salvar sempre que mudar
-  useEffect(() => {
-    saveObjectives(allObjectives);
-  }, [allObjectives]);
+  const { currentCompany } = useCompany();
 
   // Filtrar objetivos pelo espaço atual
   const objectives = useMemo(() => {
@@ -107,34 +73,30 @@ export function useObjectives() {
   }, [objectives, calculateCommercialValue]);
 
   const addObjective = useCallback(
-    async (data: Omit<Objective, "id" | "createdAt" | "progressLogs" | "currentValue" | "status" | "project_id" | "user_id" | "company_id">) => {
-      if (!user?.id) return null;
-
-      const initialValue =
-        data.isCommercial && data.dataSources.length > 0
-          ? calculateCommercialValue(data.dataSources, data.valueType)
-          : 0;
-
+    (data: Omit<Objective, "id" | "createdAt" | "progressLogs" | "currentValue" | "status" | "project_id" | "user_id" | "company_id">) => {
+      const initialValue = data.isCommercial && data.dataSources.length > 0
+        ? calculateCommercialValue(data.dataSources, data.valueType)
+        : 0;
+      
       const newObjective: Objective = {
         ...data,
-        id: `obj-${Date.now()}`,
+        id: crypto.randomUUID(),
         project_id: "default",
-        user_id: user.id,
+        user_id: "current-user",
         company_id: currentCompany,
+        createdAt: new Date().toISOString().split("T")[0],
         currentValue: initialValue,
         status: calculateStatus(initialValue, data.targetValue, data.deadline),
-        createdAt: new Date().toISOString().split("T")[0],
         progressLogs: [],
       };
-
-      setAllObjectives((prev) => [newObjective, ...prev]);
+      setAllObjectives((prev) => [...prev, newObjective]);
       return newObjective;
     },
-    [user?.id, currentCompany, calculateCommercialValue]
+    [setAllObjectives, calculateCommercialValue, currentCompany]
   );
 
   const updateObjective = useCallback(
-    async (id: string, data: Partial<Omit<Objective, "id" | "createdAt" | "progressLogs" | "project_id" | "user_id" | "company_id">>) => {
+    (id: string, data: Partial<Omit<Objective, "id" | "createdAt" | "progressLogs" | "project_id" | "user_id" | "company_id">>) => {
       setAllObjectives((prev) =>
         prev.map((obj) => {
           if (obj.id !== id) return obj;
@@ -144,43 +106,80 @@ export function useObjectives() {
         })
       );
     },
-    []
+    [setAllObjectives]
   );
 
-  const deleteObjective = useCallback(async (id: string) => {
-    setAllObjectives((prev) => prev.filter((obj) => obj.id !== id));
-  }, []);
+  const deleteObjective = useCallback(
+    (id: string) => {
+      setAllObjectives((prev) => prev.filter((obj) => obj.id !== id));
+    },
+    [setAllObjectives]
+  );
 
   const addProgressLog = useCallback(
-    async (objectiveId: string, month: number, year: number, value: number, description: string) => {
-      const newLog: ProgressLog = {
-        id: `log-${Date.now()}`,
+    (objectiveId: string, month: number, year: number, value: number, description: string) => {
+      const log: ProgressLog = {
+        id: crypto.randomUUID(),
         objective_id: objectiveId,
         month,
         year,
+        date: new Date().toISOString().split("T")[0],
         value,
         description,
-        date: new Date().toISOString().split("T")[0],
       };
 
       setAllObjectives((prev) =>
         prev.map((obj) => {
           if (obj.id !== objectiveId) return obj;
-
-          // Verificar se já existe log para este mês/ano
-          const existingIndex = obj.progressLogs.findIndex(
-            (l) => l.month === month && l.year === year
+          
+          // Remove log existente para o mesmo mês/ano se houver
+          const filteredLogs = obj.progressLogs.filter(
+            (l) => !(l.month === month && l.year === year)
           );
-
-          let updatedLogs: ProgressLog[];
-          if (existingIndex >= 0) {
-            updatedLogs = [...obj.progressLogs];
-            updatedLogs[existingIndex] = newLog;
+          const newLogs = [...filteredLogs, log];
+          
+          // O currentValue é a soma de todos os valores mensais para quantity
+          // Ou o último valor para financial/percentage
+          let newCurrentValue: number;
+          if (obj.valueType === "quantity") {
+            newCurrentValue = newLogs.reduce((sum, l) => sum + l.value, 0);
           } else {
-            updatedLogs = [...obj.progressLogs, newLog];
+            // Para financial e percentage, pega o valor mais recente
+            const sortedLogs = [...newLogs].sort((a, b) => {
+              if (a.year !== b.year) return b.year - a.year;
+              return b.month - a.month;
+            });
+            newCurrentValue = sortedLogs[0]?.value || 0;
           }
+          
+          const newStatus = calculateStatus(newCurrentValue, obj.targetValue, obj.deadline);
+          return {
+            ...obj,
+            progressLogs: newLogs,
+            currentValue: newCurrentValue,
+            status: newStatus,
+          };
+        })
+      );
 
-          // Recalcular valor atual
+      return log;
+    },
+    [setAllObjectives]
+  );
+
+  const updateProgressLog = useCallback(
+    (objectiveId: string, month: number, year: number, value: number, description: string) => {
+      setAllObjectives((prev) =>
+        prev.map((obj) => {
+          if (obj.id !== objectiveId) return obj;
+          
+          const updatedLogs = obj.progressLogs.map((log) => {
+            if (log.month === month && log.year === year) {
+              return { ...log, value, description, date: new Date().toISOString().split("T")[0] };
+            }
+            return log;
+          });
+          
           let newCurrentValue: number;
           if (obj.valueType === "quantity") {
             newCurrentValue = updatedLogs.reduce((sum, l) => sum + l.value, 0);
@@ -191,9 +190,8 @@ export function useObjectives() {
             });
             newCurrentValue = sortedLogs[0]?.value || 0;
           }
-
+          
           const newStatus = calculateStatus(newCurrentValue, obj.targetValue, obj.deadline);
-
           return {
             ...obj,
             progressLogs: updatedLogs,
@@ -202,30 +200,20 @@ export function useObjectives() {
           };
         })
       );
-
-      return newLog;
     },
-    []
-  );
-
-  const updateProgressLog = useCallback(
-    async (objectiveId: string, month: number, year: number, value: number, description: string) => {
-      return addProgressLog(objectiveId, month, year, value, description);
-    },
-    [addProgressLog]
+    [setAllObjectives]
   );
 
   const deleteProgressLog = useCallback(
-    async (objectiveId: string, month: number, year: number) => {
+    (objectiveId: string, month: number, year: number) => {
       setAllObjectives((prev) =>
         prev.map((obj) => {
           if (obj.id !== objectiveId) return obj;
-
+          
           const filteredLogs = obj.progressLogs.filter(
             (log) => !(log.month === month && log.year === year)
           );
-
-          // Recalcular valor atual
+          
           let newCurrentValue: number;
           if (obj.valueType === "quantity") {
             newCurrentValue = filteredLogs.reduce((sum, l) => sum + l.value, 0);
@@ -236,9 +224,8 @@ export function useObjectives() {
             });
             newCurrentValue = sortedLogs[0]?.value || 0;
           }
-
+          
           const newStatus = calculateStatus(newCurrentValue, obj.targetValue, obj.deadline);
-
           return {
             ...obj,
             progressLogs: filteredLogs,
@@ -248,7 +235,7 @@ export function useObjectives() {
         })
       );
     },
-    []
+    [setAllObjectives]
   );
 
   const getMonthlyProgress = useCallback((objective: Objective, month: number, year: number) => {
@@ -267,14 +254,8 @@ export function useObjectives() {
     return { total, onTrack, atRisk, behind };
   }, [objectivesWithCommercialValues]);
 
-  // Refetch (compatibilidade)
-  const refetch = useCallback(() => {
-    setAllObjectives(getStoredObjectives());
-  }, []);
-
   return {
     objectives: objectivesWithCommercialValues,
-    isLoading,
     addObjective,
     updateObjective,
     deleteObjective,
@@ -284,6 +265,5 @@ export function useObjectives() {
     getMonthlyProgress,
     getProgress,
     getStats,
-    refetch,
   };
 }

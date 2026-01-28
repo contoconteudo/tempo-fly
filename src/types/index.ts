@@ -1,5 +1,8 @@
 /**
  * Tipos centralizados do sistema.
+ * 
+ * NOTA: AppRole e ModulePermission estão definidos em @/data/mockData.ts
+ * para facilitar a transição para o backend.
  */
 
 export interface Project {
@@ -18,11 +21,12 @@ export type ObjectiveValueType = 'financial' | 'quantity' | 'percentage';
 export type ObjectiveStatus = 'on_track' | 'at_risk' | 'behind';
 export type CommercialDataSource = 'crm' | 'clients';
 
+// Existing types remain the same but will be updated to include project_id
 export interface Lead {
   id: string;
   project_id: string;
   user_id: string;
-  company_id: string;
+  company_id: string; // Espaço ao qual o lead pertence
   name: string;
   company: string;
   email: string;
@@ -41,7 +45,7 @@ export interface Client {
   id: string;
   project_id: string;
   user_id: string;
-  company_id: string;
+  company_id: string; // Espaço ao qual o cliente pertence
   company: string;
   contact: string;
   email: string;
@@ -62,14 +66,14 @@ export interface NPSRecord {
   year: number;
   score: number;
   notes: string;
-  recordedAt?: string;
+  recordedAt: string;
 }
 
 export interface Objective {
   id: string;
   project_id: string;
   user_id: string;
-  company_id: string;
+  company_id: string; // Espaço ao qual o objetivo pertence
   name: string;
   description: string;
   valueType: ObjectiveValueType;

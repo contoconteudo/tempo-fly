@@ -1,47 +1,13 @@
-/**
- * Hook para gerenciar Leads - MODO MOCK
- * 
- * TODO: Conectar Supabase depois
- * Atualmente usa localStorage para persistência.
- */
-
-import { useState, useEffect, useCallback, useMemo } from "react";
-import { useAuth } from "./useAuth";
-import { useCompany } from "@/contexts/CompanyContext";
+import { useLocalStorage } from "./useLocalStorage";
 import { Lead, LeadStage } from "@/types";
+import { useCallback, useEffect, useMemo } from "react";
+import { STORAGE_KEYS, AUTOMATION_CONFIG } from "@/lib/constants";
 import { MOCK_LEADS } from "@/data/mockData";
-import { AUTOMATION_CONFIG, STORAGE_KEYS } from "@/lib/constants";
-
-// Obter leads do localStorage
-const getStoredLeads = (): Lead[] => {
-  try {
-    const stored = localStorage.getItem(STORAGE_KEYS.LEADS);
-    if (stored) {
-      return JSON.parse(stored);
-    }
-    // Salvar leads mock se não existir
-    localStorage.setItem(STORAGE_KEYS.LEADS, JSON.stringify(MOCK_LEADS));
-    return MOCK_LEADS;
-  } catch {
-    return MOCK_LEADS;
-  }
-};
-
-// Salvar leads no localStorage
-const saveLeads = (leads: Lead[]) => {
-  localStorage.setItem(STORAGE_KEYS.LEADS, JSON.stringify(leads));
-};
+import { useCompany } from "@/contexts/CompanyContext";
 
 export function useLeads() {
-  const { user } = useAuth();
+  const [allLeads, setAllLeads] = useLocalStorage<Lead[]>(STORAGE_KEYS.LEADS, MOCK_LEADS);
   const { currentCompany } = useCompany();
-  const [allLeads, setAllLeads] = useState<Lead[]>(getStoredLeads);
-  const [isLoading, setIsLoading] = useState(false);
-
-  // Salvar sempre que mudar
-  useEffect(() => {
-    saveLeads(allLeads);
-  }, [allLeads]);
 
   // Filtrar leads pelo espaço atual
   const leads = useMemo(() => {
@@ -49,53 +15,41 @@ export function useLeads() {
   }, [allLeads, currentCompany]);
 
   const addLead = useCallback(
-    async (data: Omit<Lead, "id" | "createdAt" | "stageChangedAt" | "project_id" | "user_id" | "company_id">) => {
-      if (!user?.id) return null;
-
+    (data: Omit<Lead, "id" | "createdAt" | "stageChangedAt" | "project_id" | "user_id" | "company_id">) => {
       const now = new Date().toISOString();
       const newLead: Lead = {
         ...data,
-        id: `lead-${Date.now()}`,
+        id: crypto.randomUUID(),
         project_id: "default",
-        user_id: user.id,
+        user_id: "current-user",
         company_id: currentCompany,
         createdAt: now.split("T")[0],
         stageChangedAt: now,
-        stage: data.stage || "new",
       };
-
-      setAllLeads((prev) => [newLead, ...prev]);
+      setAllLeads((prev) => [...prev, newLead]);
       return newLead;
     },
-    [user?.id, currentCompany]
+    [setAllLeads, currentCompany]
   );
 
   const updateLead = useCallback(
-    async (id: string, data: Partial<Omit<Lead, "id" | "createdAt" | "project_id" | "user_id" | "company_id">>) => {
+    (id: string, data: Partial<Omit<Lead, "id" | "createdAt" | "project_id" | "user_id" | "company_id">>) => {
       setAllLeads((prev) =>
-        prev.map((lead) => {
-          if (lead.id !== id) return lead;
-          
-          const updated = { ...lead, ...data };
-          
-          // Atualizar stageChangedAt se o stage mudou
-          if (data.stage && data.stage !== lead.stage) {
-            updated.stageChangedAt = new Date().toISOString();
-          }
-          
-          return updated;
-        })
+        prev.map((lead) => (lead.id === id ? { ...lead, ...data } : lead))
       );
     },
-    []
+    [setAllLeads]
   );
 
-  const deleteLead = useCallback(async (id: string) => {
-    setAllLeads((prev) => prev.filter((lead) => lead.id !== id));
-  }, []);
+  const deleteLead = useCallback(
+    (id: string) => {
+      setAllLeads((prev) => prev.filter((lead) => lead.id !== id));
+    },
+    [setAllLeads]
+  );
 
   const moveLeadToStage = useCallback(
-    async (id: string, stage: LeadStage) => {
+    (id: string, stage: LeadStage) => {
       const now = new Date().toISOString();
       setAllLeads((prev) =>
         prev.map((lead) =>
@@ -105,7 +59,7 @@ export function useLeads() {
         )
       );
     },
-    []
+    [setAllLeads]
   );
 
   const getLeadsByStage = useCallback(
@@ -118,15 +72,10 @@ export function useLeads() {
   const getPipelineStats = useCallback(() => {
     const activeLeads = leads.filter((l) => l.stage !== "lost");
     const totalValue = activeLeads.reduce((sum, l) => sum + l.value, 0);
-    const proposalsSent = leads.filter((l) =>
-      ["proposal", "negotiation", "won"].includes(l.stage)
-    ).length;
+    const proposalsSent = leads.filter((l) => ["proposal", "negotiation", "won"].includes(l.stage)).length;
     const won = leads.filter((l) => l.stage === "won");
-    const conversionRate =
-      leads.length > 0 ? Math.round((won.length / leads.length) * 100) : 0;
-    const inNegotiation = leads.filter(
-      (l) => l.stage !== "won" && l.stage !== "lost"
-    ).length;
+    const conversionRate = leads.length > 0 ? Math.round((won.length / leads.length) * 100) : 0;
+    const inNegotiation = leads.filter((l) => l.stage !== "won" && l.stage !== "lost").length;
 
     return {
       totalLeads: activeLeads.length,
@@ -139,50 +88,48 @@ export function useLeads() {
     };
   }, [leads]);
 
-  // Automação: mover leads de "proposal" para "followup"
+  // Automação: mover leads de "proposal" para "followup" após período configurado
   useEffect(() => {
-    if (!user?.id) return;
-
     const checkAndMoveLeads = () => {
       const now = new Date().getTime();
       const thresholdMs = AUTOMATION_CONFIG.PROPOSAL_TO_FOLLOWUP_HOURS * 60 * 60 * 1000;
 
-      setAllLeads((prev) =>
-        prev.map((lead) => {
-          if (lead.stage !== "proposal") return lead;
-          const stageTime = new Date(lead.stageChangedAt).getTime();
-          if (now - stageTime >= thresholdMs) {
-            return {
-              ...lead,
-              stage: "followup" as LeadStage,
-              stageChangedAt: new Date().toISOString(),
-            };
+      setAllLeads((prevLeads) => {
+        let changed = false;
+        const updatedLeads = prevLeads.map((lead) => {
+          if (lead.stage === "proposal") {
+            const stageTime = new Date(lead.stageChangedAt).getTime();
+            if (now - stageTime >= thresholdMs) {
+              changed = true;
+              return { 
+                ...lead, 
+                stage: "followup" as LeadStage, 
+                stageChangedAt: new Date().toISOString() 
+              };
+            }
           }
           return lead;
-        })
-      );
+        });
+        return changed ? updatedLeads : prevLeads;
+      });
     };
 
+    // Verificar imediatamente ao carregar
     checkAndMoveLeads();
+
+    // Verificar no intervalo configurado
     const interval = setInterval(checkAndMoveLeads, AUTOMATION_CONFIG.AUTOMATION_CHECK_INTERVAL);
 
     return () => clearInterval(interval);
-  }, [user?.id]);
-
-  // Refetch (compatibilidade)
-  const refetch = useCallback(() => {
-    setAllLeads(getStoredLeads());
-  }, []);
+  }, [setAllLeads]);
 
   return {
     leads,
-    isLoading,
     addLead,
     updateLead,
     deleteLead,
     moveLeadToStage,
     getLeadsByStage,
     getPipelineStats,
-    refetch,
   };
 }

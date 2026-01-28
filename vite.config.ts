@@ -23,14 +23,6 @@ export default defineConfig(({ mode }) => ({
     alias: {
       "@": path.resolve(__dirname, "./src"),
     },
-    // Deduplicate React to avoid multiple instances
-    dedupe: ["react", "react-dom"],
-  },
-  
-  // Optimize dependencies
-  optimizeDeps: {
-    include: ["react", "react-dom"],
-    exclude: [],
   },
   
   // Configurações de build para produção

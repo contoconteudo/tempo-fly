@@ -1,16 +1,8 @@
-/**
- * Contexto de Empresa/Espaço - MODO MOCK
- * 
- * TODO: Conectar Supabase depois
- * Atualmente usa dados mockados e localStorage.
- */
-
 import { createContext, useContext, useState, useEffect, useCallback, ReactNode } from "react";
-import { useAuth, getMockUserById } from "@/hooks/useAuth";
+import { MOCK_USERS, USER_PERMISSIONS_KEY, CompanyAccess } from "@/data/mockData";
 import { getAllSpaces, Space } from "@/hooks/useSpaces";
 
-export type Company = string;
-export type { Space };
+export type Company = CompanyAccess;
 
 interface CompanyContextType {
   currentCompany: Company;
@@ -18,103 +10,137 @@ interface CompanyContextType {
   allowedCompanies: Company[];
   availableSpaces: Space[];
   isAdmin: boolean;
-  isLoading: boolean;
-  refetchSpaces: () => Promise<void>;
 }
 
 const CompanyContext = createContext<CompanyContextType | undefined>(undefined);
 
 const STORAGE_KEY = "conto-company-selection";
+const CURRENT_USER_KEY = "conto-mock-current-user";
 
 interface CompanyProviderProps {
   children: ReactNode;
 }
 
-export function CompanyProvider({ children }: CompanyProviderProps) {
-  const { user, isLoading: authLoading } = useAuth();
-  const [currentCompany, setCurrentCompanyState] = useState<Company>("");
-  const [allowedCompanies, setAllowedCompanies] = useState<Company[]>([]);
-  const [availableSpaces, setAvailableSpaces] = useState<Space[]>([]);
-  const [isAdmin, setIsAdmin] = useState(false);
-  const [isLoading, setIsLoading] = useState(true);
+// Helper para obter permissões salvas
+const getSavedPermissions = () => {
+  try {
+    const saved = localStorage.getItem(USER_PERMISSIONS_KEY);
+    return saved ? JSON.parse(saved) : {};
+  } catch {
+    return {};
+  }
+};
 
-  // Carregar espaços e permissões
-  const loadSpacesAndPermissions = useCallback(async () => {
-    if (!user?.id) {
-      setAvailableSpaces([]);
+export function CompanyProvider({ children }: CompanyProviderProps) {
+  const [currentCompany, setCurrentCompanyState] = useState<Company>("conto");
+  const [allowedCompanies, setAllowedCompanies] = useState<Company[]>([]);
+  const [availableSpaces, setAvailableSpaces] = useState<Space[]>(getAllSpaces);
+  const [isAdmin, setIsAdmin] = useState(false);
+
+  // Carregar espaços disponíveis
+  const loadAvailableSpaces = useCallback(() => {
+    setAvailableSpaces(getAllSpaces());
+  }, []);
+
+  // Função para carregar permissões do usuário atual
+  const loadUserPermissions = useCallback(() => {
+    const spaces = getAllSpaces();
+    const spaceIds = spaces.map(s => s.id);
+    const currentUserJson = localStorage.getItem(CURRENT_USER_KEY);
+    
+    if (!currentUserJson) {
+      // Sem usuário logado, resetar para defaults
       setAllowedCompanies([]);
       setIsAdmin(false);
-      setIsLoading(false);
       return;
     }
 
-    // Buscar dados do usuário mock
-    const mockUser = getMockUserById(user.id);
-    const userIsAdmin = mockUser?.role === "admin";
-    setIsAdmin(userIsAdmin);
+    try {
+      const currentUser = JSON.parse(currentUserJson);
+      const mockUser = MOCK_USERS.find((u) => u.id === currentUser.id);
+      
+      if (mockUser) {
+        // Admin tem acesso a tudo
+        if (mockUser.role === "admin") {
+          setIsAdmin(true);
+          setAllowedCompanies(spaceIds);
+        } else {
+          setIsAdmin(false);
+          
+          // Verificar permissões salvas ou usar default do mock
+          const savedPermissions = getSavedPermissions();
+          const userPerms = savedPermissions[currentUser.id];
+          
+          if (userPerms?.companies && userPerms.companies.length > 0) {
+            // Filtrar apenas espaços que ainda existem
+            const validCompanies = userPerms.companies.filter((c: string) => spaceIds.includes(c));
+            setAllowedCompanies(validCompanies);
+            // Se empresa atual não está nas permitidas, mudar para a primeira permitida
+            if (!validCompanies.includes(currentCompany) && validCompanies.length > 0) {
+              setCurrentCompanyState(validCompanies[0]);
+              localStorage.setItem(STORAGE_KEY, validCompanies[0]);
+            }
+          } else if (mockUser.companies && mockUser.companies.length > 0) {
+            // Filtrar apenas espaços que ainda existem
+            const validCompanies = mockUser.companies.filter(c => spaceIds.includes(c));
+            setAllowedCompanies(validCompanies);
+            // Se empresa atual não está nas permitidas, mudar para a primeira permitida
+            if (!validCompanies.includes(currentCompany) && validCompanies.length > 0) {
+              setCurrentCompanyState(validCompanies[0]);
+              localStorage.setItem(STORAGE_KEY, validCompanies[0]);
+            }
+          } else {
+            setAllowedCompanies([]);
+          }
+        }
+      } else {
+        // Usuário não encontrado no mock - sem permissões
+        setAllowedCompanies([]);
+        setIsAdmin(false);
+      }
+    } catch {
+      setAllowedCompanies([]);
+      setIsAdmin(false);
+    }
+  }, [currentCompany]);
 
-    // Carregar espaços
+  // Carregar permissões na inicialização
+  useEffect(() => {
     const spaces = getAllSpaces();
-    setAvailableSpaces(spaces);
-
-    // Determinar espaços permitidos
-    let allowed: string[];
-    if (userIsAdmin) {
-      // Admin tem acesso a todos os espaços
-      allowed = spaces.map(s => s.id);
-    } else if (mockUser) {
-      // Usuário normal: verificar permissões
-      allowed = mockUser.companies.filter(c => spaces.some(s => s.id === c));
-    } else {
-      // Novo usuário sem configuração
-      allowed = [];
-    }
-
-    setAllowedCompanies(allowed);
-
-    // Definir empresa atual
-    const savedCompany = localStorage.getItem(STORAGE_KEY);
+    const spaceIds = spaces.map(s => s.id);
     
-    if (savedCompany && allowed.includes(savedCompany)) {
+    const savedCompany = localStorage.getItem(STORAGE_KEY) as Company | null;
+    if (savedCompany && spaceIds.includes(savedCompany)) {
       setCurrentCompanyState(savedCompany);
-    } else if (allowed.length > 0) {
-      setCurrentCompanyState(allowed[0]);
-      localStorage.setItem(STORAGE_KEY, allowed[0]);
-    } else if (spaces.length > 0) {
-      // Fallback para primeiro espaço disponível
-      setCurrentCompanyState(spaces[0].id);
-      localStorage.setItem(STORAGE_KEY, spaces[0].id);
+    } else if (spaceIds.length > 0) {
+      // Se não há empresa salva ou a salva não existe mais, usar a primeira
+      setCurrentCompanyState(spaceIds[0]);
     }
+    
+    loadAvailableSpaces();
+    loadUserPermissions();
+  }, []);
 
-    setIsLoading(false);
-  }, [user?.id]);
-
-  // Carregar na inicialização e quando o usuário mudar
-  useEffect(() => {
-    if (!authLoading) {
-      loadSpacesAndPermissions();
-    }
-  }, [authLoading, loadSpacesAndPermissions]);
-
-  // Escutar evento de mudança de espaços
-  useEffect(() => {
-    const handleSpacesChange = () => {
-      loadSpacesAndPermissions();
-    };
-
-    window.addEventListener("spaces-changed", handleSpacesChange);
-    return () => window.removeEventListener("spaces-changed", handleSpacesChange);
-  }, [loadSpacesAndPermissions]);
-
-  // Escutar evento de mudança de auth
+  // Escutar evento de mudança de usuário (login/logout)
   useEffect(() => {
     const handleAuthChange = () => {
-      loadSpacesAndPermissions();
+      loadUserPermissions();
     };
 
     window.addEventListener("auth-user-changed", handleAuthChange);
     return () => window.removeEventListener("auth-user-changed", handleAuthChange);
-  }, [loadSpacesAndPermissions]);
+  }, [loadUserPermissions]);
+
+  // Escutar evento de mudança de espaços
+  useEffect(() => {
+    const handleSpacesChange = () => {
+      loadAvailableSpaces();
+      loadUserPermissions();
+    };
+
+    window.addEventListener("spaces-changed", handleSpacesChange);
+    return () => window.removeEventListener("spaces-changed", handleSpacesChange);
+  }, [loadAvailableSpaces, loadUserPermissions]);
 
   const setCurrentCompany = (company: Company) => {
     // Verificar se o usuário tem acesso a essa empresa
@@ -135,8 +161,6 @@ export function CompanyProvider({ children }: CompanyProviderProps) {
         allowedCompanies,
         availableSpaces,
         isAdmin,
-        isLoading,
-        refetchSpaces: loadSpacesAndPermissions,
       }}
     >
       {children}

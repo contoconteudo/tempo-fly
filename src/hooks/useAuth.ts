@@ -1,73 +1,35 @@
-/**
- * Hook de Autenticação - MODO MOCK
- * 
- * TODO: Conectar Supabase depois
- * Atualmente usa dados mockados para desenvolvimento.
- */
-
 import { useState, useEffect, useCallback } from "react";
-import { MOCK_USERS, MockUser } from "@/data/mockData";
+import { MOCK_USERS, MockUser, MOCK_STORAGE_KEYS } from "@/data/mockData";
 
+// Tipo simplificado do usuário para a interface
 export interface AuthUser {
   id: string;
   email: string;
   full_name: string;
 }
 
-const AUTH_STORAGE_KEY = "conto-auth-user";
-const REGISTERED_USERS_KEY = "conto-registered-users";
-
-// Obter usuários registrados do localStorage
-const getRegisteredUsers = (): MockUser[] => {
-  try {
-    const stored = localStorage.getItem(REGISTERED_USERS_KEY);
-    if (stored) {
-      return JSON.parse(stored);
-    }
-  } catch {
-    // Ignorar erros de parse
-  }
-  return [];
-};
-
-// Salvar usuário registrado
-const saveRegisteredUser = (user: MockUser) => {
-  const users = getRegisteredUsers();
-  users.push(user);
-  localStorage.setItem(REGISTERED_USERS_KEY, JSON.stringify(users));
-};
-
-// Obter todos os usuários (mock + registrados)
-const getAllUsers = (): MockUser[] => {
-  return [...MOCK_USERS, ...getRegisteredUsers()];
-};
-
 export function useAuth() {
   const [user, setUser] = useState<AuthUser | null>(null);
   const [isLoading, setIsLoading] = useState(true);
 
-  // Carregar usuário salvo no localStorage
+  // Carrega usuário do localStorage na inicialização
   useEffect(() => {
-    try {
-      const stored = localStorage.getItem(AUTH_STORAGE_KEY);
-      if (stored) {
-        const parsedUser = JSON.parse(stored);
-        setUser(parsedUser);
+    const savedUser = localStorage.getItem(MOCK_STORAGE_KEYS.CURRENT_USER);
+    if (savedUser) {
+      try {
+        const parsed = JSON.parse(savedUser);
+        setUser(parsed);
+      } catch {
+        localStorage.removeItem(MOCK_STORAGE_KEYS.CURRENT_USER);
       }
-    } catch {
-      // Ignorar erros de parse
-    } finally {
-      setIsLoading(false);
     }
+    setIsLoading(false);
   }, []);
 
   const signIn = useCallback(async (email: string, password: string): Promise<void> => {
-    // Simular delay de rede
-    await new Promise(resolve => setTimeout(resolve, 500));
-
-    const allUsers = getAllUsers();
-    const foundUser = allUsers.find(
-      u => u.email.toLowerCase() === email.toLowerCase() && u.password === password
+    // Busca usuário mockado
+    const foundUser = MOCK_USERS.find(
+      (u) => u.email.toLowerCase() === email.toLowerCase() && u.password === password
     );
 
     if (!foundUser) {
@@ -81,104 +43,65 @@ export function useAuth() {
     };
 
     setUser(authUser);
-    localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(authUser));
-
-    // Disparar evento para outros componentes
-    window.dispatchEvent(
-      new CustomEvent("auth-user-changed", { detail: authUser })
-    );
+    localStorage.setItem(MOCK_STORAGE_KEYS.CURRENT_USER, JSON.stringify(authUser));
+    
+    // Disparar evento para notificar outros componentes sobre mudança de usuário
+    window.dispatchEvent(new CustomEvent("auth-user-changed", { detail: authUser }));
   }, []);
 
-  const signUp = useCallback(async (email: string, password: string, name?: string): Promise<void> => {
-    // Simular delay de rede
-    await new Promise(resolve => setTimeout(resolve, 500));
-
-    const allUsers = getAllUsers();
-    const existingUser = allUsers.find(
-      u => u.email.toLowerCase() === email.toLowerCase()
+  const signUp = useCallback(async (email: string, password: string): Promise<void> => {
+    // Verifica se email já existe nos usuários mockados
+    const existsInMock = MOCK_USERS.find(
+      (u) => u.email.toLowerCase() === email.toLowerCase()
     );
 
-    if (existingUser) {
+    if (existsInMock) {
       throw new Error("Este e-mail já está cadastrado no sistema");
     }
 
-    // Criar novo usuário
-    const newUser: MockUser = {
-      id: `user-${Date.now()}`,
-      email: email.toLowerCase(),
-      password,
-      full_name: name || email.split("@")[0],
-      role: "user",
-      modules: ["dashboard"],
-      companies: [], // Sem acesso até admin liberar
-      created_at: new Date().toISOString(),
-    };
-
-    // Salvar no localStorage
-    saveRegisteredUser(newUser);
-
-    // Fazer login automático
-    const authUser: AuthUser = {
-      id: newUser.id,
-      email: newUser.email,
-      full_name: newUser.full_name,
-    };
-
-    setUser(authUser);
-    localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(authUser));
-
-    // Disparar evento para outros componentes
-    window.dispatchEvent(
-      new CustomEvent("auth-user-changed", { detail: authUser })
+    // Verifica se já existe um usuário criado com este email no localStorage
+    const registeredUsersStr = localStorage.getItem(MOCK_STORAGE_KEYS.REGISTERED_USERS);
+    const registeredUsers: AuthUser[] = registeredUsersStr ? JSON.parse(registeredUsersStr) : [];
+    
+    const existsInRegistered = registeredUsers.find(
+      (u) => u.email.toLowerCase() === email.toLowerCase()
     );
+
+    if (existsInRegistered) {
+      throw new Error("Este e-mail já está cadastrado no sistema");
+    }
+
+    // Cria novo usuário
+    const newUser: AuthUser = {
+      id: `user-new-${Date.now()}`,
+      email: email,
+      full_name: email.split("@")[0],
+    };
+
+    // Salva na lista de usuários registrados
+    registeredUsers.push(newUser);
+    localStorage.setItem(MOCK_STORAGE_KEYS.REGISTERED_USERS, JSON.stringify(registeredUsers));
+
+    // Loga o usuário
+    setUser(newUser);
+    localStorage.setItem(MOCK_STORAGE_KEYS.CURRENT_USER, JSON.stringify(newUser));
   }, []);
 
   const signOut = useCallback(async () => {
-    // Simular delay de rede
-    await new Promise(resolve => setTimeout(resolve, 300));
-
     setUser(null);
-    localStorage.removeItem(AUTH_STORAGE_KEY);
-
-    // Disparar evento para outros componentes
-    window.dispatchEvent(
-      new CustomEvent("auth-user-changed", { detail: null })
-    );
-  }, []);
-
-  const resetPassword = useCallback(async (email: string): Promise<void> => {
-    // Simular delay de rede
-    await new Promise(resolve => setTimeout(resolve, 500));
-
-    const allUsers = getAllUsers();
-    const foundUser = allUsers.find(
-      u => u.email.toLowerCase() === email.toLowerCase()
-    );
-
-    if (!foundUser) {
-      throw new Error("E-mail não encontrado no sistema");
-    }
-
-    // Em modo mock, apenas simula o envio
-    console.log(`[MOCK] Email de recuperação enviado para: ${email}`);
+    localStorage.removeItem(MOCK_STORAGE_KEYS.CURRENT_USER);
+    
+    // Disparar evento para notificar outros componentes sobre logout
+    window.dispatchEvent(new CustomEvent("auth-user-changed", { detail: null }));
   }, []);
 
   return {
     user,
-    session: user ? { user } : null, // Compatibilidade
+    session: user ? { user } : null, // Compatibilidade com interface anterior
     isLoading,
     signIn,
     signUp,
     signOut,
-    resetPassword,
     isAuthenticated: !!user,
   };
 }
-
-// Exportar função para obter usuário mock pelo ID
-export const getMockUserById = (id: string): MockUser | undefined => {
-  return getAllUsers().find(u => u.id === id);
-};
-
-// Exportar função para obter todos os usuários
-export const getAllMockUsers = getAllUsers;

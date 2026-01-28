@@ -1,99 +1,73 @@
-# Painel Conto - Sistema de Gestão Comercial
+# Welcome to your Lovable project
 
-Sistema completo de gestão comercial, CRM e estratégia desenvolvido com React, TypeScript e Supabase.
+## Project info
 
-## 🚀 Stack Tecnológica
+**URL**: https://lovable.dev/projects/REPLACE_WITH_PROJECT_ID
 
-- **Frontend**: React 18 + TypeScript + Vite
-- **Estilização**: Tailwind CSS + Shadcn/UI
-- **Estado**: Zustand + React Query
-- **Backend**: Supabase (PostgreSQL + Auth + Edge Functions)
-- **Mobile**: Capacitor (Android/iOS)
-- **PWA**: Service Worker + Web App Manifest
+## How can I edit this code?
 
-## 📋 Funcionalidades
+There are several ways of editing your application.
 
-- ✅ Dashboard com métricas em tempo real
-- ✅ CRM completo com pipeline Kanban
-- ✅ Gestão de clientes com NPS
-- ✅ Objetivos estratégicos bimestrais
-- ✅ Sistema de permissões por role
-- ✅ Multi-espaços (workspaces)
-- ✅ PWA instalável
-- ✅ App Android via Capacitor
+**Use Lovable**
 
-## 🛠️ Instalação
+Simply visit the [Lovable Project](https://lovable.dev/projects/REPLACE_WITH_PROJECT_ID) and start prompting.
 
-```bash
-# Clonar repositório
-git clone https://github.com/seu-usuario/painel-conto.git
-cd painel-conto
+Changes made via Lovable will be committed automatically to this repo.
 
-# Instalar dependências
-npm install
+**Use your preferred IDE**
 
-# Configurar variáveis de ambiente
-cp .env.example .env
-# Edite .env com suas credenciais do Supabase
+If you want to work locally using your own IDE, you can clone this repo and push changes. Pushed changes will also be reflected in Lovable.
 
-# Iniciar desenvolvimento
+The only requirement is having Node.js & npm installed - [install with nvm](https://github.com/nvm-sh/nvm#installing-and-updating)
+
+Follow these steps:
+
+```sh
+# Step 1: Clone the repository using the project's Git URL.
+git clone <YOUR_GIT_URL>
+
+# Step 2: Navigate to the project directory.
+cd <YOUR_PROJECT_NAME>
+
+# Step 3: Install the necessary dependencies.
+npm i
+
+# Step 4: Start the development server with auto-reloading and an instant preview.
 npm run dev
 ```
 
-## 📦 Comandos Disponíveis
+**Edit a file directly in GitHub**
 
-```bash
-# Desenvolvimento
-npm run dev          # Inicia servidor de desenvolvimento
+- Navigate to the desired file(s).
+- Click the "Edit" button (pencil icon) at the top right of the file view.
+- Make your changes and commit the changes.
 
-# Build
-npm run build        # Build de produção
-npm run preview      # Preview do build
+**Use GitHub Codespaces**
 
-# Linting
-npm run lint         # Executar ESLint
+- Navigate to the main page of your repository.
+- Click on the "Code" button (green button) near the top right.
+- Select the "Codespaces" tab.
+- Click on "New codespace" to launch a new Codespace environment.
+- Edit files directly within the Codespace and commit and push your changes once you're done.
 
-# Mobile (Capacitor)
-npm run build        # Build para mobile
-npx cap sync         # Sincronizar com Capacitor
-npx cap open android # Abrir projeto Android
-```
+## What technologies are used for this project?
 
-## 🌐 Deploy
+This project is built with:
 
-### cPanel / Apache
-Veja [DEPLOY_CPANEL.md](./DEPLOY_CPANEL.md) para instruções completas.
+- Vite
+- TypeScript
+- React
+- shadcn-ui
+- Tailwind CSS
 
-### Build Mobile (APK)
-Veja [MOBILE_BUILD.md](./MOBILE_BUILD.md) para gerar APK Android.
+## How can I deploy this project?
 
-## 🗄️ Banco de Dados
+Simply open [Lovable](https://lovable.dev/projects/REPLACE_WITH_PROJECT_ID) and click on Share -> Publish.
 
-O schema do banco de dados e as Edge Functions estão documentados em [SUPABASE_SETUP.md](./SUPABASE_SETUP.md).
+## Can I connect a custom domain to my Lovable project?
 
-## 📡 API REST
+Yes, you can!
 
-Documentação completa da API em [API_DOCUMENTATION.md](./API_DOCUMENTATION.md).
+To connect a domain, navigate to Project > Settings > Domains and click Connect Domain.
 
-## 🔐 Segurança
-
-- Autenticação via Supabase Auth
-- Row Level Security (RLS) em todas as tabelas
-- CORS configurado nas Edge Functions
-- Headers de segurança via .htaccess
-- CSP (Content Security Policy) configurado
-
-## 📱 PWA
-
-O app é instalável como PWA:
-1. Acesse o app no navegador mobile
-2. No menu do navegador, selecione "Adicionar à tela inicial"
-3. O app funcionará offline e terá ícone próprio
-
-## 📄 Licença
-
-Este projeto é proprietário. Todos os direitos reservados.
-
----
-
-Desenvolvido com ❤️ por Conto
+Read more here: [Setting up a custom domain](https://docs.lovable.dev/features/custom-domain#custom-domain)

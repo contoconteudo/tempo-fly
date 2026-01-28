@@ -1,8 +1,6 @@
 /**
- * Hook para gerenciar espaços (empresas) do sistema - MODO MOCK
- * 
- * TODO: Conectar Supabase depois
- * Atualmente usa localStorage para persistência.
+ * Hook para gerenciar espaços (empresas) do sistema.
+ * Apenas admins podem criar e excluir espaços.
  */
 
 import { useState, useEffect, useCallback } from "react";
@@ -15,18 +13,6 @@ export interface Space {
   createdAt: string;
 }
 
-// Cores disponíveis para novos espaços
-export const SPACE_COLORS = [
-  { value: "#c4378f", label: "Magenta" },
-  { value: "#2563eb", label: "Azul" },
-  { value: "#16a34a", label: "Verde" },
-  { value: "#9333ea", label: "Roxo" },
-  { value: "#ea580c", label: "Laranja" },
-  { value: "#0891b2", label: "Ciano" },
-  { value: "#e11d48", label: "Rosa" },
-  { value: "#d97706", label: "Âmbar" },
-];
-
 const SPACES_STORAGE_KEY = "conto-spaces";
 
 // Espaços padrão do sistema
@@ -35,16 +21,28 @@ const DEFAULT_SPACES: Space[] = [
     id: "conto", 
     label: "Conto", 
     description: "Agência Conto", 
-    color: "#c4378f",
+    color: "bg-primary",
     createdAt: "2024-01-01T00:00:00Z"
   },
   { 
     id: "amplia", 
     label: "Amplia", 
     description: "Agência Amplia", 
-    color: "#2563eb",
+    color: "bg-blue-600",
     createdAt: "2024-01-01T00:00:00Z"
   },
+];
+
+// Cores disponíveis para novos espaços
+export const SPACE_COLORS = [
+  { value: "bg-primary", label: "Magenta" },
+  { value: "bg-blue-600", label: "Azul" },
+  { value: "bg-green-600", label: "Verde" },
+  { value: "bg-purple-600", label: "Roxo" },
+  { value: "bg-orange-600", label: "Laranja" },
+  { value: "bg-cyan-600", label: "Ciano" },
+  { value: "bg-rose-600", label: "Rosa" },
+  { value: "bg-amber-600", label: "Âmbar" },
 ];
 
 // Função para obter espaços do localStorage
@@ -54,7 +52,7 @@ const getStoredSpaces = (): Space[] => {
     if (stored) {
       return JSON.parse(stored);
     }
-    // Salvar espaços padrão se não existir
+    // Inicializar com espaços padrão
     localStorage.setItem(SPACES_STORAGE_KEY, JSON.stringify(DEFAULT_SPACES));
     return DEFAULT_SPACES;
   } catch {
@@ -67,17 +65,16 @@ const generateSpaceId = (name: string): string => {
   return name
     .toLowerCase()
     .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .replace(/[^a-z0-9]/g, "-")
-    .replace(/-+/g, "-")
-    .replace(/^-|-$/g, "");
+    .replace(/[\u0300-\u036f]/g, "") // Remove acentos
+    .replace(/[^a-z0-9]/g, "-") // Substitui caracteres especiais por hífen
+    .replace(/-+/g, "-") // Remove hífens duplicados
+    .replace(/^-|-$/g, ""); // Remove hífens no início/fim
 };
 
 export function useSpaces() {
   const [spaces, setSpaces] = useState<Space[]>(getStoredSpaces);
-  const [isLoading, setIsLoading] = useState(false);
 
-  // Escutar mudanças de storage
+  // Recarregar espaços quando houver mudança em outra aba
   useEffect(() => {
     const handleStorageChange = (e: StorageEvent) => {
       if (e.key === SPACES_STORAGE_KEY) {
@@ -93,112 +90,92 @@ export function useSpaces() {
   const saveSpaces = useCallback((newSpaces: Space[]) => {
     localStorage.setItem(SPACES_STORAGE_KEY, JSON.stringify(newSpaces));
     setSpaces(newSpaces);
+    // Disparar evento para notificar outros componentes
     window.dispatchEvent(new CustomEvent("spaces-changed"));
   }, []);
 
   // Criar novo espaço
-  const createSpace = useCallback(
-    async (
-      label: string,
-      description: string,
-      color: string
-    ): Promise<{ success: boolean; error?: string; space?: Space }> => {
-      if (!label.trim()) {
-        return { success: false, error: "Nome é obrigatório" };
-      }
+  const createSpace = useCallback((label: string, description: string, color: string): { success: boolean; error?: string; space?: Space } => {
+    const id = generateSpaceId(label);
+    
+    // Validações
+    if (!label.trim()) {
+      return { success: false, error: "Nome é obrigatório" };
+    }
+    
+    if (label.length > 50) {
+      return { success: false, error: "Nome deve ter no máximo 50 caracteres" };
+    }
+    
+    if (spaces.some(s => s.id === id)) {
+      return { success: false, error: "Já existe um espaço com nome similar" };
+    }
 
-      if (label.length > 50) {
-        return { success: false, error: "Nome deve ter no máximo 50 caracteres" };
-      }
+    const newSpace: Space = {
+      id,
+      label: label.trim(),
+      description: description.trim() || `Espaço ${label.trim()}`,
+      color,
+      createdAt: new Date().toISOString(),
+    };
 
-      const id = generateSpaceId(label);
+    const newSpaces = [...spaces, newSpace];
+    saveSpaces(newSpaces);
+    
+    return { success: true, space: newSpace };
+  }, [spaces, saveSpaces]);
 
-      if (spaces.some(s => s.id === id)) {
-        return { success: false, error: "Já existe um espaço com nome similar" };
-      }
+  // Atualizar espaço existente
+  const updateSpace = useCallback((id: string, updates: Partial<Omit<Space, "id" | "createdAt">>): { success: boolean; error?: string } => {
+    const spaceIndex = spaces.findIndex(s => s.id === id);
+    
+    if (spaceIndex === -1) {
+      return { success: false, error: "Espaço não encontrado" };
+    }
 
-      const newSpace: Space = {
-        id,
-        label: label.trim(),
-        description: description.trim() || `Espaço ${label.trim()}`,
-        color,
-        createdAt: new Date().toISOString(),
-      };
-
-      const newSpaces = [...spaces, newSpace];
-      saveSpaces(newSpaces);
-      
-      return { success: true, space: newSpace };
-    },
-    [spaces, saveSpaces]
-  );
-
-  // Atualizar espaço
-  const updateSpace = useCallback(
-    async (
-      id: string,
-      updates: Partial<Omit<Space, "id" | "createdAt">>
-    ): Promise<{ success: boolean; error?: string }> => {
-      const spaceIndex = spaces.findIndex(s => s.id === id);
-      
-      if (spaceIndex === -1) {
-        return { success: false, error: "Espaço não encontrado" };
-      }
-
-      const updatedSpaces = [...spaces];
-      updatedSpaces[spaceIndex] = {
-        ...updatedSpaces[spaceIndex],
-        ...updates,
-      };
-      
-      saveSpaces(updatedSpaces);
-      return { success: true };
-    },
-    [spaces, saveSpaces]
-  );
+    const updatedSpaces = [...spaces];
+    updatedSpaces[spaceIndex] = {
+      ...updatedSpaces[spaceIndex],
+      ...updates,
+    };
+    
+    saveSpaces(updatedSpaces);
+    return { success: true };
+  }, [spaces, saveSpaces]);
 
   // Excluir espaço
-  const deleteSpace = useCallback(
-    async (id: string): Promise<{ success: boolean; error?: string }> => {
-      const space = spaces.find(s => s.id === id);
-      
-      if (!space) {
-        return { success: false, error: "Espaço não encontrado" };
-      }
+  const deleteSpace = useCallback((id: string): { success: boolean; error?: string } => {
+    const space = spaces.find(s => s.id === id);
+    
+    if (!space) {
+      return { success: false, error: "Espaço não encontrado" };
+    }
 
-      if (spaces.length <= 1) {
-        return { success: false, error: "Não é possível excluir o último espaço" };
-      }
+    // Não permitir excluir se for o último espaço
+    if (spaces.length <= 1) {
+      return { success: false, error: "Não é possível excluir o último espaço" };
+    }
 
-      const newSpaces = spaces.filter(s => s.id !== id);
-      saveSpaces(newSpaces);
-      
-      return { success: true };
-    },
-    [spaces, saveSpaces]
-  );
+    const newSpaces = spaces.filter(s => s.id !== id);
+    saveSpaces(newSpaces);
+    
+    return { success: true };
+  }, [spaces, saveSpaces]);
 
-  // Obter IDs de todos os espaços
+  // Obter IDs de todos os espaços (para tipagem dinâmica)
   const getSpaceIds = useCallback((): string[] => {
     return spaces.map(s => s.id);
   }, [spaces]);
 
-  // Refetch (compatibilidade)
-  const refetch = useCallback(() => {
-    setSpaces(getStoredSpaces());
-  }, []);
-
   return {
     spaces,
-    isLoading,
     createSpace,
     updateSpace,
     deleteSpace,
     getSpaceIds,
-    refetch,
     SPACE_COLORS,
   };
 }
 
-// Exportar função síncrona para uso em contextos sem hook
+// Exportar função para uso em contextos sem hook
 export const getAllSpaces = getStoredSpaces;
