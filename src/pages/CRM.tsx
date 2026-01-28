@@ -282,7 +282,7 @@ export default function CRM() {
         </div>
         <Button 
           onClick={() => handleAddClick("new")} 
-          className="gradient-primary text-primary-foreground gap-1.5 w-full sm:w-auto touch-manipulation"
+          className="gradient-primary text-primary-foreground gap-1.5 sm:w-auto touch-manipulation"
         >
           <Plus className="h-4 w-4" />
           Novo Lead
